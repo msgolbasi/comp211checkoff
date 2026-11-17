@@ -1,0 +1,111 @@
+/*
+ * refcount.c
+ *
+ * A small reference-counted object built by hand in C.
+ * This is a stripped-down version of what CPython does
+ * for every Python object.
+ *
+ * Build and run:
+ *     gcc -Wall -fsanitize=address -g refcount.c -o refcount
+ *     ./refcount
+ */
+
+#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
+
+/* ---------- The object ---------- */
+
+typedef struct {
+    int refcount;        /* how many owners this object has */
+    char name[32];
+} Object;
+
+/* Create an object. The caller gets the first reference. */
+Object *obj_new(const char *name) {
+    Object *obj = malloc(sizeof(Object));
+
+    if (obj == NULL) {
+        perror("malloc");
+        exit(1);
+    }
+
+    obj->refcount = 1;
+    strncpy(obj->name, name, sizeof(obj->name) - 1);
+    obj->name[sizeof(obj->name) - 1] = '\0';
+
+    printf("  [new]     %s (refcount = %d)\n", obj->name, obj->refcount);
+
+    return obj;
+}
+
+/* Add an owner: count goes up by 1. */
+void obj_incref(Object *obj) {
+    obj->refcount++;
+
+    printf("  [incref]  %s (refcount = %d)\n", obj->name, obj->refcount);
+}
+
+/* Remove an owner: count goes down by 1, free on the last one. */
+void obj_decref(Object *obj) {
+    obj->refcount--;
+
+    printf("  [decref]  %s (refcount = %d)\n", obj->name, obj->refcount);
+
+    if (obj->refcount == 0) {
+        printf("  [free]    %s\n", obj->name);
+        free(obj);
+    }
+}
+
+/* ---------- A container that shares ownership ---------- */
+
+typedef struct {
+    Object *item;
+} Box;
+
+/* Store an object in the box.
+ * Incref the new object BEFORE decref'ing the old one,
+ * in case someone stores the object the box already holds. */
+void box_store(Box *box, Object *obj) {
+    obj_incref(obj);
+
+    if (box->item != NULL) {
+        obj_decref(box->item);
+    }
+
+    box->item = obj;
+}
+
+/* Empty the box, giving up its reference. */
+void box_clear(Box *box) {
+    if (box->item != NULL) {
+        Object *old = box->item;
+        box->item = NULL;
+
+        obj_decref(old);
+    }
+}
+
+/* ---------- Walkthrough ---------- */
+
+int main(void) {
+    printf("1. Create an object:\n");
+    Object *a = obj_new("apple");
+
+    printf("\n2. Store it in a box (two owners now):\n");
+    Box box = { NULL };
+    box_store(&box, a);
+
+    printf("\n3. main() is done with it:\n");
+    obj_decref(a);
+    a = NULL;
+
+    printf("\n4. The box still has it:\n");
+    printf("  box holds %s\n", box.item->name);
+
+    printf("\n5. Clear the box (last owner):\n");
+    box_clear(&box);
+
+    return 0;
+}
